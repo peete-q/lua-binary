@@ -10,13 +10,13 @@ A c library for serializing lua value to a binary string
 
 ##example
 
-  local binary = require 'binary'
-  local tb = {
-    [1] = 1,
-    [2] = false,
-    s = 'string',
-  }
-  tb.ref = tb
-  local s = binary.pack(nil, 1, true, false, 'string', tb)
-  local a, b, c, d, e, f = binary.unpack(s)
+    local binary = require 'binary'
+    local tb = {
+        [1] = 1,
+        [2] = false,
+        s = 'string',
+    }
+    tb.ref = tb
+    local s = binary.pack(nil, 1, true, false, 'string', tb)
+    local a, b, c, d, e, f = binary.unpack(s)
   
