@@ -1,4 +1,3 @@
-lua-binary
-==========
+##lua-binary
 
 A c library for serializing lua value to a binary string
