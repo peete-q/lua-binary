@@ -1,4 +1,3 @@
-
 #include <assert.h>
 #include <ctype.h>
 #include <stddef.h>
@@ -137,27 +136,23 @@ static int push(lua_State *L, Buffer* buf, int idx)
 			i = 1;
 			while (lua_next(L, idx))
 			{
-				if (lua_isnumber(L, -2) && lua_tonumber(L, -2) == i)
+				if (lua_isnumber(L, -2) && lua_tonumber(L, -2) == i++)
 				{
-					++i;
 					push(L, buf, lua_gettop(L));
 					lua_pop(L, 1);
 				}
-				else
+				else break;
+			}
+			Buffer_addchar(buf, OP_TABLE_DELIMITER);
+			if (lua_gettop(L) > top)
+			{
+				do
 				{
-					Buffer_addchar(buf, OP_TABLE_DELIMITER);
 					push(L, buf, lua_gettop(L) - 1);
 					push(L, buf, lua_gettop(L));
 					lua_pop(L, 1);
-					break;
 				}
-			}
-			
-			while (lua_next(L, idx))
-			{
-				push(L, buf, lua_gettop(L) - 1);
-				push(L, buf, lua_gettop(L));
-				lua_pop(L, 1);
+				while (lua_next(L, idx));
 			}
 			Buffer_addchar(buf, OP_TABLE_END);
 			break;
