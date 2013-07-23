@@ -244,10 +244,27 @@ static int lib_unpack (lua_State *L)
 	return binary_unpack(L, data, len);
 }
 
+static int lib_tostring (lua_State *L)
+{
+	long n = luaL_checkinteger(L, 1);
+	lua_pushlstring(L, &n, sizeof(long));
+	return 1;
+}
+
+static int lib_tonumber (lua_State *L)
+{
+	size_t len;
+	const char *s = luaL_checklstring(L, 1, &len);
+	luaL_check (len == sizeof(long), "bad length %d", len);
+	lua_pushnumber(L, *(long*)s);
+	return 1;
+}
 
 static const struct luaL_Reg lib[] = {
 	{"pack", lib_pack},
 	{"unpack", lib_unpack},
+	{"tostring", lib_tostring},
+	{"tonumber", lib_tonumber},
 	{NULL, NULL}
 };
 
