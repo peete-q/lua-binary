@@ -7,6 +7,7 @@
 
 #include "lua.h"
 #include "lauxlib.h"
+#include "buffer.h"
 
 
 #if (LUA_VERSION_NUM >= 502)
@@ -48,52 +49,7 @@ static wref _wrefs[REF_SIZE];
 static size_t _rsize;
 static rref _rrefs[REF_SIZE];
 
-typedef struct {
-	char* data;
-	size_t pos;
-	size_t size;
-} buffer;
-
-
-static buffer* buffer_new(size_t size)
-{
-	buffer* self = (buffer*)malloc(sizeof(buffer));
-	self->pos = 0;
-	self->size = size;
-	self->data = (char*)malloc(sizeof(char) * self->size);
-	return self;
-}
-
-static void buffer_delete(buffer* self)
-{
-	free(self->data);
-	free(self);
-}
-
-static void buffer_checksize(buffer* self, size_t need)
-{
-	if (self->pos + need > self->size)
-	{
-		self->size *= 2;
-		self->data = (char*)realloc(self->data, sizeof(char)* self->size);
-	}
-}
-
-static void buffer_addchar(buffer* self, char ch)
-{
-	buffer_checksize(self, 1);
-	self->data[self->pos++] = ch;
-}
-
-static void buffer_addarray(buffer* self, const char* data, size_t size)
-{
-	buffer_checksize(self, size);
-	memcpy(self->data + self->pos, data, size);
-	self->pos += size;
-}
-
-
-static int push(lua_State *L, buffer* buf, int idx)
+static int push(lua_State *L, struct buffer* buf, int idx)
 {
 	int top = lua_gettop(L);
 	int type = lua_type(L, idx);
@@ -137,7 +93,7 @@ static int push(lua_State *L, buffer* buf, int idx)
 			}
 			luaL_check(_wsize < REF_SIZE, "table refs overflow %d", REF_SIZE);
 			_wrefs[_wsize].ptr = ptr;
-			_wrefs[_wsize++].pos = buf->pos;
+			_wrefs[_wsize++].pos = buffer_tell(buf);
 			
 			buffer_addchar(buf, OP_TABLE);
 			lua_pushnil(L);
@@ -247,9 +203,9 @@ static int pop(lua_State *L, const char *data, size_t pos, size_t size)
 	return pos;
 }
 
-static buffer* binary_pack (lua_State *L)
+struct buffer* binary_pack (lua_State *L)
 {
-	buffer* buf = buffer_new(256);
+	struct buffer* buf = buffer_new(256);
 	int i, args = lua_gettop(L);
 	int ok = 1;
 	buffer_addchar(buf, args);
@@ -259,7 +215,7 @@ static buffer* binary_pack (lua_State *L)
 	return buf;
 }
 
-static int binary_unpack (lua_State *L, const char* data, size_t len)
+int binary_unpack (lua_State *L, const char* data, size_t len)
 {
 	size_t pos = 1;
 	int i, top = lua_gettop(L), args = data[0];
@@ -274,8 +230,8 @@ static int binary_unpack (lua_State *L, const char* data, size_t len)
 
 static int lib_pack (lua_State *L)
 {
-	buffer* buf = binary_pack(L);
-	lua_pushlstring(L, buf->data, buf->size);
+	struct buffer* buf = binary_pack(L);
+	lua_pushlstring(L, buffer_pointer(buf), buffer_tell(buf));
 	buffer_delete(buf);
 	return 1;
 }
