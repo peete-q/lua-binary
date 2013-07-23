@@ -52,66 +52,74 @@ typedef struct {
 	char* data;
 	size_t pos;
 	size_t size;
-} Buffer;
+} buffer;
 
 
-static void Buffer_init(Buffer* buf)
+static buffer* buffer_new(size_t size)
 {
-	buf->pos = 0;
-	buf->size = 256;
-	buf->data = (char*)malloc(sizeof(char) * buf->size);
+	buffer* self = (buffer*)malloc(sizeof(buffer));
+	self->pos = 0;
+	self->size = size;
+	self->data = (char*)malloc(sizeof(char) * self->size);
+	return self;
 }
 
-static void Buffer_checksize(Buffer* buf, size_t need)
+static void buffer_delete(buffer* self)
 {
-	if (buf->pos + need > buf->size)
+	free(self->data);
+	free(self);
+}
+
+static void buffer_checksize(buffer* self, size_t need)
+{
+	if (self->pos + need > self->size)
 	{
-		buf->size *= 2;
-		buf->data = (char*)realloc(buf->data, sizeof(char)* buf->size);
+		self->size *= 2;
+		self->data = (char*)realloc(self->data, sizeof(char)* self->size);
 	}
 }
 
-static void Buffer_addchar(Buffer* buf, char ch)
+static void buffer_addchar(buffer* self, char ch)
 {
-	Buffer_checksize(buf, 1);
-	buf->data[buf->pos++] = ch;
+	buffer_checksize(self, 1);
+	self->data[self->pos++] = ch;
 }
 
-static void Buffer_addarray(Buffer* buf, const char* data, size_t size)
+static void buffer_addarray(buffer* self, const char* data, size_t size)
 {
-	Buffer_checksize(buf, size);
-	memcpy(buf->data + buf->pos, data, size);
-	buf->pos += size;
+	buffer_checksize(self, size);
+	memcpy(self->data + self->pos, data, size);
+	self->pos += size;
 }
 
 
-static int push(lua_State *L, Buffer* buf, int idx)
+static int push(lua_State *L, buffer* buf, int idx)
 {
 	int top = lua_gettop(L);
 	int type = lua_type(L, idx);
 	switch(type)
 	{
 		case LUA_TNIL:
-			Buffer_addchar(buf, OP_NIL);
+			buffer_addchar(buf, OP_NIL);
 			break;
 		case LUA_TBOOLEAN:
-			Buffer_addchar(buf, OP_BOOLEAN);
-			Buffer_addchar(buf, lua_toboolean(L, idx));
+			buffer_addchar(buf, OP_BOOLEAN);
+			buffer_addchar(buf, lua_toboolean(L, idx));
 			break;
 		case LUA_TNUMBER:
 		{
 			lua_Number n = lua_tonumber(L, idx);
-			Buffer_addchar(buf, OP_NUMBER);
-			Buffer_addarray(buf, (char *)&n, sizeof(n));
+			buffer_addchar(buf, OP_NUMBER);
+			buffer_addarray(buf, (char *)&n, sizeof(n));
 			break;
 		}
 		case LUA_TSTRING:
 		{
 			size_t len;
 			const char* str = lua_tolstring(L, idx, &len);
-			Buffer_addchar(buf, OP_STRING);
-			Buffer_addarray(buf, str, len);
-			Buffer_addchar(buf, '\0');
+			buffer_addchar(buf, OP_STRING);
+			buffer_addarray(buf, str, len);
+			buffer_addchar(buf, '\0');
 			break;
 		}
 		case LUA_TTABLE:
@@ -122,8 +130,8 @@ static int push(lua_State *L, Buffer* buf, int idx)
 			{
 				if (_wrefs[i].ptr == ptr)
 				{
-					Buffer_addchar(buf, OP_TABLE_REF);
-					Buffer_addarray(buf, (char *)&_wrefs[i].pos, sizeof(size_t));
+					buffer_addchar(buf, OP_TABLE_REF);
+					buffer_addarray(buf, (char *)&_wrefs[i].pos, sizeof(size_t));
 					goto end;
 				}
 			}
@@ -131,7 +139,7 @@ static int push(lua_State *L, Buffer* buf, int idx)
 			_wrefs[_wsize].ptr = ptr;
 			_wrefs[_wsize++].pos = buf->pos;
 			
-			Buffer_addchar(buf, OP_TABLE);
+			buffer_addchar(buf, OP_TABLE);
 			lua_pushnil(L);
 			i = 1;
 			while (lua_next(L, idx))
@@ -143,7 +151,7 @@ static int push(lua_State *L, Buffer* buf, int idx)
 				}
 				else break;
 			}
-			Buffer_addchar(buf, OP_TABLE_DELIMITER);
+			buffer_addchar(buf, OP_TABLE_DELIMITER);
 			if (lua_gettop(L) > top)
 			{
 				do
@@ -154,7 +162,7 @@ static int push(lua_State *L, Buffer* buf, int idx)
 				}
 				while (lua_next(L, idx));
 			}
-			Buffer_addchar(buf, OP_TABLE_END);
+			buffer_addchar(buf, OP_TABLE_END);
 			break;
 		}
 		default:
@@ -170,7 +178,8 @@ end:
 
 static int pop(lua_State *L, const char *data, size_t pos, size_t size)
 {
-	switch(data[pos++])
+	int op = data[pos++];
+	switch(op)
 	{
 		case OP_NIL:
 			lua_pushnil(L);
@@ -199,17 +208,17 @@ static int pop(lua_State *L, const char *data, size_t pos, size_t size)
 			_rrefs[_rsize++].idx = luaL_ref(L, LUA_REGISTRYINDEX);
 			for (i = 1; data[pos] != OP_TABLE_DELIMITER; ++i)
 			{
-				luaL_check(pos < size, "bad binary data");
+				luaL_check(pos < size, "bad data, when read index %d:%d", pos, size);
 				pos = pop(L, data, pos, size);
 				lua_rawseti(L, -2, i);
 			}
 			pos += 1;
 			while (data[pos] != OP_TABLE_END)
 			{
-				luaL_check(pos < size, "bad binary data");
+				luaL_check(pos < size, "bad data, when read key %d:%d", pos, size);
 				pos = pop(L, data, pos, size);
 				
-				luaL_check(pos < size, "bad binary data");
+				luaL_check(pos < size, "bad data, when read value %d:%d", pos, size);
 				pos = pop(L, data, pos, size);
 				lua_settable(L, -3);
 			}
@@ -228,38 +237,32 @@ static int pop(lua_State *L, const char *data, size_t pos, size_t size)
 					return pos;
 				}
 			}
-			luaL_error(L, "bad binary data");
+			luaL_error(L, "bad ref, %d", where);
 			return 0;
 		}
 		default:
-			luaL_error(L, "bad binary data");
+			luaL_error(L, "bad opecode, %d", op);
 			return 0;
 	}
 	return pos;
 }
 
-
-static int api_pack (lua_State *L)
+static buffer* binary_pack (lua_State *L)
 {
-	Buffer buf;
+	buffer* buf = buffer_new(256);
 	int i, args = lua_gettop(L);
 	int ok = 1;
-	Buffer_init(&buf);
-	Buffer_addchar(&buf, args);
+	buffer_addchar(buf, args);
 	_wsize = 0;
 	for (i = 1; ok && i <= args; ++i)
-		ok = push(L, &buf, i);
-	lua_pushlstring(L, buf.data, buf.size);
-	free(buf.data);
-	return 1;
+		ok = push(L, buf, i);
+	return buf;
 }
 
-
-static int api_unpack (lua_State *L)
+static int binary_unpack (lua_State *L, const char* data, size_t len)
 {
-	size_t pos = 1, len;
-	const char *data = luaL_checklstring(L, 1, &len);
-	int top = lua_gettop(L), i, args = data[0];
+	size_t pos = 1;
+	int i, top = lua_gettop(L), args = data[0];
 	_rsize = 0;
 	for (i = 0; pos && i < args; ++i)
 		pos = pop(L, data, pos, len);
@@ -269,16 +272,32 @@ static int api_unpack (lua_State *L)
 	return args;
 }
 
+static int lib_pack (lua_State *L)
+{
+	buffer* buf = binary_pack(L);
+	lua_pushlstring(L, buf->data, buf->size);
+	buffer_delete(buf);
+	return 1;
+}
 
-static const struct luaL_Reg thislib[] = {
-	{"pack", api_pack},
-	{"unpack", api_unpack},
+
+static int lib_unpack (lua_State *L)
+{
+	size_t len;
+	const char *data = luaL_checklstring(L, 1, &len);
+	return binary_unpack(L, data, len);
+}
+
+
+static const struct luaL_Reg lib[] = {
+	{"pack", lib_pack},
+	{"unpack", lib_unpack},
 	{NULL, NULL}
 };
 
 
 LUALIB_API int luaopen_binary (lua_State *L) {
-	luaL_register(L, "binary", thislib);
+	luaL_register(L, "binary", lib);
 	
 	lua_pushstring(L, "VERSION");
 	lua_pushstring(L, VERSION);
