@@ -1,10 +1,11 @@
 
+#include <math.h>
 #include <malloc.h>
 
 #include "buffer.h"
 
 struct buffer {
-  char* data;
+	char* data;
 	size_t pos;
 	size_t size;
 };
@@ -28,7 +29,7 @@ void buffer_checksize(struct buffer* self, size_t need)
 {
 	if (self->pos + need > self->size)
 	{
-		self->size *= 2;
+		self->size += need > self->size ? need : self->size;
 		self->data = (char*)realloc(self->data, sizeof(char)* self->size);
 	}
 }
