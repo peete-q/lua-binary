@@ -1,17 +1,18 @@
 
 CC = gcc
-CFLAGS = -I../include -g
-LFLAGS = -L../lib -llua51
-TARGET = binary.dll
+CFLAG = -g -I../include
+LFLAG = -L../lib -llua51
 
-SRC = $(wildcard *.c)
-OBJ = $(patsubst %.c, %.o, $(SRC))
+OBJ = binary.o buffer.o
 
-%.o : %.c
-	$(CC) $(CFLAGS) -o $@ -c $<
-	
 all : $(OBJ)
-	$(CC) -lmingw32 --share -o $(TARGET) $(OBJ) $(LFLAGS)
+	$(CC) -lmingw32 --share -o binary.dll $(OBJ) $(LFLAG)
+
+buffer.o : buffer.c
+	$(CC) -c buffer.c $(CFLAG)
+	
+binary.o : binary.c
+	$(CC) -c binary.c $(CFLAG)
 
 clean :
-	rm -f $(TARGET) $(OBJ)
+	rm -f $(OBJ) binary.dll
