@@ -131,7 +131,6 @@ end:
 	return 1;
 }
 
-
 static int pop(lua_State *L, const char *data, size_t pos, size_t size)
 {
 	int op = data[pos++];
@@ -203,16 +202,14 @@ static int pop(lua_State *L, const char *data, size_t pos, size_t size)
 	return pos;
 }
 
-struct buffer* binary_pack (lua_State *L)
+int binary_pack (lua_State *L, struct buffer* buf, size_t idx, size_t num)
 {
-	struct buffer* buf = buffer_new(256);
-	int i, args = lua_gettop(L);
-	int ok = 1;
-	buffer_addchar(buf, args);
 	_wsize = 0;
-	for (i = 1; ok && i <= args; ++i)
-		ok = push(L, buf, i);
-	return buf;
+	buffer_addchar(buf, num);
+	num += idx;
+	for (; idx < num; ++idx)
+		push(L, buf, idx);
+	return 0;
 }
 
 int binary_unpack (lua_State *L, const char* data, size_t len)
@@ -220,7 +217,7 @@ int binary_unpack (lua_State *L, const char* data, size_t len)
 	size_t pos = 1;
 	int i, top = lua_gettop(L), args = data[0];
 	_rsize = 0;
-	for (i = 0; pos && i < args; ++i)
+	for (i = 0; i < args; ++i)
 		pos = pop(L, data, pos, len);
 	for (i = 0; i < _rsize; ++i)
 		luaL_unref(L, LUA_REGISTRYINDEX, _rrefs[i].idx);
@@ -230,7 +227,9 @@ int binary_unpack (lua_State *L, const char* data, size_t len)
 
 static int lib_pack (lua_State *L)
 {
-	struct buffer* buf = binary_pack(L);
+	struct buffer* buf = buffer_new(256);
+	buffer_seek(buf, 0);
+	binary_pack(L, buf, 1, lua_gettop(L));
 	lua_pushlstring(L, buffer_pointer(buf), buffer_tell(buf));
 	buffer_delete(buf);
 	return 1;
@@ -240,14 +239,14 @@ static int lib_pack (lua_State *L)
 static int lib_unpack (lua_State *L)
 {
 	size_t len;
-	const char *data = luaL_checklstring(L, 1, &len);
-	return binary_unpack(L, data, len);
+	const char *s = luaL_checklstring(L, 1, &len);
+	return binary_unpack(L, s, len);
 }
 
 static int lib_tostring (lua_State *L)
 {
-	long n = luaL_checkinteger(L, 1);
-	lua_pushlstring(L, &n, sizeof(long));
+	size_t n = luaL_checkinteger(L, 1);
+	lua_pushlstring(L, &n, sizeof(size_t));
 	return 1;
 }
 
@@ -255,8 +254,8 @@ static int lib_tonumber (lua_State *L)
 {
 	size_t len;
 	const char *s = luaL_checklstring(L, 1, &len);
-	luaL_check (len == sizeof(long), "bad length %d", len);
-	lua_pushnumber(L, *(long*)s);
+	luaL_check (len == sizeof(size_t), "bad length %d", len);
+	lua_pushnumber(L, *(size_t*)s);
 	return 1;
 }
 

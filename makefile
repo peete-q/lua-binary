@@ -6,7 +6,7 @@ LFLAG = -L../lib -llua51
 OBJ = binary.o buffer.o
 
 all : $(OBJ)
-	$(CC) -lmingw32 --share -o binary.dll $(OBJ) $(LFLAG)
+	$(CC) -lmingw32 -shared -fPIC -Wl,--out-implib,binary.lib -o binary.dll $(OBJ) $(LFLAG)
 
 buffer.o : buffer.c
 	$(CC) -c buffer.c $(CFLAG)
