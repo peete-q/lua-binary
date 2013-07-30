@@ -20,9 +20,9 @@
 #define VERSION		"LuaBinary 1.0"
 #define RELEASE		"LuaBinary 1.0.1"
 
-#define REF_SIZE	256
+#define REFS_SIZE	256
 
-typedef enum {
+enum {
 	OP_NIL,
 	OP_BOOLEAN,
 	OP_NUMBER,
@@ -31,25 +31,35 @@ typedef enum {
 	OP_TABLE_REF,
 	OP_TABLE_DELIMITER,
 	OP_TABLE_END,
-} OP_TYPE;
+};
 
-typedef struct {
-	const void* ptr;
-	size_t pos;
-} wref;
+struct userdata_t {
+	struct {
+		size_t idx;
+		size_t pos;
+	} rrefs[REFS_SIZE];
+	
+	struct {
+		const void* ptr;
+		size_t pos;
+	} wrefs[REFS_SIZE];
+	
+	size_t rcount;
+	size_t wcount;
+};
 
-typedef struct {
-	size_t pos;
-	size_t idx;
-} rref;
+static struct userdata_t *getuserdata(lua_State *L)
+{
+	void *ptr;
+	int top = lua_gettop(L);
+	lua_getglobal(L, "binary");
+	lua_getfield(L, -1, "USERDATA");
+	ptr = lua_touserdata(L, -1);
+	lua_settop(L, top);
+	return (struct userdata_t*) ptr;
+}
 
-static size_t _wsize;
-static wref _wrefs[REF_SIZE];
-
-static size_t _rsize;
-static rref _rrefs[REF_SIZE];
-
-static int push(lua_State *L, struct buffer* buf, int idx)
+static int push(lua_State *L, struct buffer* buf, int idx, struct userdata_t *userdata)
 {
 	int top = lua_gettop(L);
 	int type = lua_type(L, idx);
@@ -82,18 +92,18 @@ static int push(lua_State *L, struct buffer* buf, int idx)
 		{
 			const void *ptr = lua_topointer(L, idx);
 			size_t i;
-			for (i = 0; i < _wsize; ++i)
+			for (i = 0; i < userdata->wcount; ++i)
 			{
-				if (_wrefs[i].ptr == ptr)
+				if (userdata->wrefs[i].ptr == ptr)
 				{
 					buffer_addchar(buf, OP_TABLE_REF);
-					buffer_addarray(buf, (char *)&_wrefs[i].pos, sizeof(size_t));
+					buffer_addarray(buf, (char *)&userdata->wrefs[i].pos, sizeof(size_t));
 					goto end;
 				}
 			}
-			luaL_check(_wsize < REF_SIZE, "table refs overflow %d", REF_SIZE);
-			_wrefs[_wsize].ptr = ptr;
-			_wrefs[_wsize++].pos = buffer_tell(buf);
+			luaL_check(userdata->wcount < REFS_SIZE, "table refs overflow %d", REFS_SIZE);
+			userdata->wrefs[userdata->wcount].ptr = ptr;
+			userdata->wrefs[userdata->wcount++].pos = buffer_tell(buf);
 			
 			buffer_addchar(buf, OP_TABLE);
 			lua_pushnil(L);
@@ -102,7 +112,7 @@ static int push(lua_State *L, struct buffer* buf, int idx)
 			{
 				if (lua_isnumber(L, -2) && lua_tonumber(L, -2) == i++)
 				{
-					push(L, buf, lua_gettop(L));
+					push(L, buf, lua_gettop(L), userdata);
 					lua_pop(L, 1);
 				}
 				else break;
@@ -112,8 +122,8 @@ static int push(lua_State *L, struct buffer* buf, int idx)
 			{
 				do
 				{
-					push(L, buf, lua_gettop(L) - 1);
-					push(L, buf, lua_gettop(L));
+					push(L, buf, lua_gettop(L) - 1, userdata);
+					push(L, buf, lua_gettop(L), userdata);
 					lua_pop(L, 1);
 				}
 				while (lua_next(L, idx));
@@ -131,7 +141,7 @@ end:
 	return 1;
 }
 
-static int pop(lua_State *L, const char *data, size_t pos, size_t size)
+static int pop(lua_State *L, const char *data, size_t pos, size_t size, struct userdata_t *userdata)
 {
 	int op = data[pos++];
 	switch(op)
@@ -158,23 +168,23 @@ static int pop(lua_State *L, const char *data, size_t pos, size_t size)
 			size_t i;
 			lua_newtable(L);
 			lua_pushvalue(L, -1);
-			luaL_check(_rsize < REF_SIZE, "table refs overflow %d", REF_SIZE);
-			_rrefs[_rsize].pos = pos - 1;
-			_rrefs[_rsize++].idx = luaL_ref(L, LUA_REGISTRYINDEX);
+			luaL_check(userdata->rcount < REFS_SIZE, "table refs overflow %d", REFS_SIZE);
+			userdata->rrefs[userdata->rcount].pos = pos - 1;
+			userdata->rrefs[userdata->rcount++].idx = luaL_ref(L, LUA_REGISTRYINDEX);
 			for (i = 1; data[pos] != OP_TABLE_DELIMITER; ++i)
 			{
 				luaL_check(pos < size, "bad data, when read index %d:%d", pos, size);
-				pos = pop(L, data, pos, size);
+				pos = pop(L, data, pos, size, userdata);
 				lua_rawseti(L, -2, i);
 			}
 			pos += 1;
 			while (data[pos] != OP_TABLE_END)
 			{
 				luaL_check(pos < size, "bad data, when read key %d:%d", pos, size);
-				pos = pop(L, data, pos, size);
+				pos = pop(L, data, pos, size, userdata);
 				
 				luaL_check(pos < size, "bad data, when read value %d:%d", pos, size);
-				pos = pop(L, data, pos, size);
+				pos = pop(L, data, pos, size, userdata);
 				lua_settable(L, -3);
 			}
 			pos += 1;
@@ -184,11 +194,11 @@ static int pop(lua_State *L, const char *data, size_t pos, size_t size)
 		{
 			size_t i, where = *(size_t*)(data + pos);
 			pos += sizeof(where);
-			for (i = 0; i < _rsize; ++i)
+			for (i = 0; i < userdata->rcount; ++i)
 			{
-				if (_rrefs[i].pos == where)
+				if (userdata->rrefs[i].pos == where)
 				{
-					lua_rawgeti(L, LUA_REGISTRYINDEX, _rrefs[i].idx);
+					lua_rawgeti(L, LUA_REGISTRYINDEX, userdata->rrefs[i].idx);
 					return pos;
 				}
 			}
@@ -204,11 +214,12 @@ static int pop(lua_State *L, const char *data, size_t pos, size_t size)
 
 int binary_pack (lua_State *L, struct buffer* buf, size_t idx, size_t num)
 {
-	_wsize = 0;
+	struct userdata_t *userdata = getuserdata(L);
+	userdata->wcount = 0;
 	buffer_addchar(buf, num);
 	num += idx;
 	for (; idx < num; ++idx)
-		push(L, buf, idx);
+		push(L, buf, idx, userdata);
 	return 0;
 }
 
@@ -216,11 +227,12 @@ int binary_unpack (lua_State *L, const char* data, size_t len)
 {
 	size_t pos = 1;
 	int i, top = lua_gettop(L), args = data[0];
-	_rsize = 0;
+	struct userdata_t *userdata = getuserdata(L);
+	userdata->rcount = 0;
 	for (i = 0; i < args; ++i)
-		pos = pop(L, data, pos, len);
-	for (i = 0; i < _rsize; ++i)
-		luaL_unref(L, LUA_REGISTRYINDEX, _rrefs[i].idx);
+		pos = pop(L, data, pos, len, userdata);
+	for (i = 0; i < userdata->rcount; ++i)
+		luaL_unref(L, LUA_REGISTRYINDEX, userdata->rrefs[i].idx);
 	lua_settop(L, top + args);
 	return args;
 }
@@ -234,7 +246,6 @@ static int lib_pack (lua_State *L)
 	buffer_delete(buf);
 	return 1;
 }
-
 
 static int lib_unpack (lua_State *L)
 {
@@ -267,9 +278,12 @@ static const struct luaL_Reg lib[] = {
 	{NULL, NULL}
 };
 
-
 LUALIB_API int luaopen_binary (lua_State *L) {
 	luaL_register(L, "binary", lib);
+	
+	lua_pushstring(L, "USERDATA");
+	lua_newuserdata(L, sizeof(struct userdata_t));
+	lua_settable(L, -3);
 	
 	lua_pushstring(L, "VERSION");
 	lua_pushstring(L, VERSION);
