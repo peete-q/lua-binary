@@ -22,10 +22,18 @@
 
 #define REFS_SIZE	256
 
+static union {
+	int dummy;
+	char endian;
+} const native = {1};
+
 enum {
 	OP_NIL,
-	OP_BOOLEAN,
-	OP_NUMBER,
+	OP_TRUE,
+	OP_FALSE,
+	OP_ZERO,
+	OP_FLOAT,
+	OP_INT,
 	OP_STRING,
 	OP_TABLE,
 	OP_TABLE_REF,
@@ -46,7 +54,43 @@ struct userdata_t {
 	
 	size_t rcount;
 	size_t wcount;
+	size_t endian;
 };
+
+static void correctbytes (char *b, int size, int endian)
+{
+	if (endian != native.endian)
+	{
+		int i = 0;
+		while (i < --size)
+		{
+			char temp = b[i];
+			b[i++] = b[size];
+			b[size] = temp;
+		}
+	}
+}
+
+static size_t buffer_addint(struct buffer *buf, lua_Integer n)
+{
+	char *a = (char*)&n;
+	size_t i;
+	for (i = sizeof(n); i > 0 && a[i - 1] == 0; --i);
+	buffer_addarray(buf, a, i);
+	return i;
+}
+
+static size_t buffer_addfloat(struct buffer *buf, lua_Number n)
+{
+	float f = n;
+	if (n == (lua_Number)f)
+	{
+		buffer_addarray(buf, &f, sizeof(f));
+		return sizeof(f);
+	}
+	buffer_addarray(buf, &n, sizeof(n));
+	return sizeof(n);
+}
 
 static struct userdata_t *getuserdata(lua_State *L)
 {
@@ -69,23 +113,38 @@ static int push(lua_State *L, struct buffer* buf, int idx, struct userdata_t *us
 			buffer_addchar(buf, OP_NIL);
 			break;
 		case LUA_TBOOLEAN:
-			buffer_addchar(buf, OP_BOOLEAN);
-			buffer_addchar(buf, lua_toboolean(L, idx));
+			buffer_addchar(buf, lua_toboolean(L, idx) ? OP_TRUE : OP_FALSE);
 			break;
 		case LUA_TNUMBER:
 		{
 			lua_Number n = lua_tonumber(L, idx);
-			buffer_addchar(buf, OP_NUMBER);
-			buffer_addarray(buf, (char *)&n, sizeof(n));
+			if (n == 0)
+				buffer_addchar(buf, OP_ZERO);
+			else if (floor(n) == n)
+			{
+				size_t size, pos = buffer_tell(buf);
+				buffer_addchar(buf, OP_INT);
+				size = buffer_addint(buf, n);
+				*buffer_at(buf, pos) |= size << 4;
+			}
+			else
+			{
+				size_t size, pos = buffer_tell(buf);
+				buffer_addchar(buf, OP_FLOAT);
+				size = buffer_addfloat(buf, n);
+				*buffer_at(buf, pos) |= size << 4;
+			}
 			break;
 		}
 		case LUA_TSTRING:
 		{
 			size_t len;
 			const char* str = lua_tolstring(L, idx, &len);
+			size_t size, pos = buffer_tell(buf);
 			buffer_addchar(buf, OP_STRING);
+			size = buffer_addint(buf, len);
+			*buffer_at(buf, pos) |= size << 4;
 			buffer_addarray(buf, str, len);
-			buffer_addchar(buf, '\0');
 			break;
 		}
 		case LUA_TTABLE:
@@ -97,7 +156,7 @@ static int push(lua_State *L, struct buffer* buf, int idx, struct userdata_t *us
 				if (userdata->wrefs[i].ptr == ptr)
 				{
 					buffer_addchar(buf, OP_TABLE_REF);
-					buffer_addarray(buf, (char *)&userdata->wrefs[i].pos, sizeof(size_t));
+					buffer_addchar(buf, userdata->wrefs[i].pos);
 					goto end;
 				}
 			}
@@ -144,23 +203,49 @@ end:
 static int pop(lua_State *L, const char *data, size_t pos, size_t size, struct userdata_t *userdata)
 {
 	int op = data[pos++];
-	switch(op)
+	switch(op & 0x0f)
 	{
 		case OP_NIL:
 			lua_pushnil(L);
 			break;
-		case OP_BOOLEAN:
-			lua_pushboolean(L, data[pos++]);
+		case OP_TRUE:
+			lua_pushboolean(L, 1);
 			break;
-		case OP_NUMBER:
-			lua_pushnumber(L, *(lua_Number*)(data + pos));
-			pos += sizeof(lua_Number);
+		case OP_FALSE:
+			lua_pushboolean(L, 0);
 			break;
+		case OP_ZERO:
+			lua_pushnumber(L, 0);
+			break;
+		case OP_INT:
+		{
+			int len = (op & 0xf0) >> 4;
+			lua_Integer n = 0;
+			memcpy(&n, data + pos, len);
+			correctbytes((char*)&n, sizeof(lua_Integer), userdata->endian);
+			lua_pushnumber(L, n);
+			pos += len;
+			break;
+		}
+		case OP_FLOAT:
+		{
+			int len = (op & 0xf0) >> 4;
+			lua_Number n = 0;
+			memcpy(&n, data + pos, len);
+			correctbytes((char*)&n, sizeof(lua_Number), userdata->endian);
+			lua_pushnumber(L, n);
+			pos += len;
+			break;
+		}
 		case OP_STRING:
 		{
-			size_t n = strlen(data + pos);
+			int len = (op & 0xf0) >> 4;
+			lua_Integer n = 0;
+			memcpy(&n, data + pos, len);
+			correctbytes((char*)&n, sizeof(lua_Integer), userdata->endian);
+			pos += len;
 			lua_pushlstring(L, data + pos, n);
-			pos += n + 1;
+			pos += n;
 			break;
 		}
 		case OP_TABLE:
@@ -192,8 +277,7 @@ static int pop(lua_State *L, const char *data, size_t pos, size_t size, struct u
 		}
 		case OP_TABLE_REF:
 		{
-			size_t i, where = *(size_t*)(data + pos);
-			pos += sizeof(where);
+			size_t i, where = data[pos++];
 			for (i = 0; i < userdata->rcount; ++i)
 			{
 				if (userdata->rrefs[i].pos == where)
@@ -216,6 +300,7 @@ int binary_pack (lua_State *L, struct buffer* buf, size_t idx, size_t num)
 {
 	struct userdata_t *userdata = getuserdata(L);
 	userdata->wcount = 0;
+	buffer_addchar(buf, native.endian);
 	buffer_addchar(buf, num);
 	num += idx;
 	for (; idx < num; ++idx)
@@ -225,10 +310,11 @@ int binary_pack (lua_State *L, struct buffer* buf, size_t idx, size_t num)
 
 int binary_unpack (lua_State *L, const char* data, size_t len)
 {
-	size_t pos = 1;
-	int i, top = lua_gettop(L), args = data[0];
+	size_t pos = 2;
+	int i, top = lua_gettop(L), args = data[1];
 	struct userdata_t *userdata = getuserdata(L);
 	userdata->rcount = 0;
+	userdata->endian = data[0];
 	for (i = 0; i < args; ++i)
 		pos = pop(L, data, pos, len, userdata);
 	for (i = 0; i < userdata->rcount; ++i)

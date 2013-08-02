@@ -93,3 +93,8 @@ char* buffer_pointer(struct buffer* self)
 {
 	return self->ptr;
 }
+
+char* buffer_at(struct buffer* self, size_t pos)
+{
+	return self->ptr + pos;
+}

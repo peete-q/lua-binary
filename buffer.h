@@ -12,4 +12,5 @@ void buffer_seek(struct buffer* self, size_t pos);
 void buffer_forward(struct buffer* self, size_t size);
 size_t buffer_size(struct buffer* self);
 char* buffer_pointer(struct buffer* self);
+char* buffer_at(struct buffer* self, size_t pos);
 
