@@ -2,11 +2,12 @@
 
 A lua library for serializing lua value to a binary string
 
-##description
+##feature
 
-* supported : nil, number, boolean, string, table.
-* extendable : lightuserdata, userdata, closure. convert to string, first.
-* unsupported : c function.
+* supported type : nil, number, boolean, string, table.
+* extendable type : lightuserdata, userdata, closure. convert to string, first.
+* compression : yes
+* loop nest: ok
 
 ##example
 
