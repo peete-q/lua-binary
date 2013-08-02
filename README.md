@@ -1,6 +1,6 @@
 #lua-binary
 
-A lua library for serializing lua value to a binary string
+A lua library for serializing lua value to a binary string, like MessagePack
 
 ##feature
 
