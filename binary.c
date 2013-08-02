@@ -230,10 +230,20 @@ static int pop(lua_State *L, const char *data, size_t pos, size_t size, struct u
 		case OP_FLOAT:
 		{
 			int len = (op & 0xf0) >> 4;
-			lua_Number n = 0;
-			memcpy(&n, data + pos, len);
-			correctbytes((char*)&n, sizeof(lua_Number), userdata->endian);
-			lua_pushnumber(L, n);
+			if (len == sizeof(float))
+			{
+				float n = 0;
+				memcpy(&n, data + pos, len);
+				correctbytes((char*)&n, sizeof(float), userdata->endian);
+				lua_pushnumber(L, n);
+			}
+			else
+			{
+				lua_Number n = 0;
+				memcpy(&n, data + pos, len);
+				correctbytes((char*)&n, sizeof(lua_Number), userdata->endian);
+				lua_pushnumber(L, n);
+			}
 			pos += len;
 			break;
 		}
@@ -262,7 +272,7 @@ static int pop(lua_State *L, const char *data, size_t pos, size_t size, struct u
 				pos = pop(L, data, pos, size, userdata);
 				lua_rawseti(L, -2, i);
 			}
-			pos += 1;
+			pos++;
 			while (data[pos] != OP_TABLE_END)
 			{
 				luaL_check(pos < size, "bad data, when read key %d:%d", pos, size);
@@ -272,7 +282,7 @@ static int pop(lua_State *L, const char *data, size_t pos, size_t size, struct u
 				pos = pop(L, data, pos, size, userdata);
 				lua_settable(L, -3);
 			}
-			pos += 1;
+			pos++;
 			break;
 		}
 		case OP_TABLE_REF:
